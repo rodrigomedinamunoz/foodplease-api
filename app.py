@@ -11,7 +11,7 @@ USER = {
 }
 
 # Productos en duro (platos)
-PLATOS = {
+PLATOS = [
     {"id": 1, "name": "Cazuela de Pollo", "price": 5990},
     {"id": 2, "name": "Empanada de Pino", "price": 1990},
     {"id": 3, "name": "Pastel de Choclo", "price": 7990},
@@ -19,7 +19,7 @@ PLATOS = {
     {"id": 5, "name": "Completo Italiano", "price": 1990},
     {"id": 6, "name": "Bebida 350 cc", "price": 1490},
     {"id": 7, "name": "Papas Fritas Familiar", "price": 4990}
-}
+]
 
 @app.route("/", methods=["GET"])
 def home():
