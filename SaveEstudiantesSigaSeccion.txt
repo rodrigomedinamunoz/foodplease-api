@@ -1,0 +1,169 @@
+PROCEDURE SaveEstudiantesSigaSeccion(i_ejec_planncorr IN NUMBER, i_secciones IN VARCHAR2, TUSUARIO IN VARCHAR2, o_cursor OUT t_cursor)
+IS
+    i_plat_ncorr number:= 203;
+    i_tpar_ncorr number:= 50;
+    o_sql varchar2(20000 byte);
+    camposbd varchar2(4000 byte) := '';
+    tipocampo varchar2(4000 byte) := '';
+    camposinsertar varchar2(4000 byte) := '';
+    camposinsertar2 varchar2(4000 byte) := '';
+    i number := 1;
+    v_pers_ncorr_docente number:= 0;
+        
+    o_error_message VARCHAR2(4000 byte);
+    o_error_code NUMBER;
+    
+    BEGIN
+        o_error_message := 'OK';
+        o_error_code:= 0;
+        
+--        SELECT LISTAGG(pers_ncorr, ',') 
+--               WITHIN GROUP (ORDER BY pers_ncorr)
+--        INTO v_pers_ncorr_docente
+--        FROM (
+--            SELECT DISTINCT c.pers_ncorr pers_ncorr
+--            FROM siga.bloques_horarios c
+--            WHERE c.secc_ccod IN (
+--                SELECT column_value FROM siga.split(i_secciones)
+--            )
+--            AND c.pers_ncorr IS NOT NULL
+--        );
+
+-- se comenta por incidente: CDA-154684 - svaldes 16-12-2025        
+        select distinct c.pers_ncorr 
+        into v_pers_ncorr_docente
+        from siga.bloques_horarios c 
+        where c.secc_ccod in (select column_value from SIGA.split(i_secciones)) 
+        and c.pers_ncorr is not null;
+        --and rownum = 1;
+        
+        for y in (
+                  SELECT C.TICA_TDESCRIPCION    TIPOCAMPO_DESC,
+                           D.COLM_TNOMBRE CAMPOBD,
+                           PC.PLCA_NORDEN,
+                           decode(PC.PLCA_NPERMITE_NULO,0,'NO','SI' )PLCA_NPERMITE_NULO
+                  FROM    SIRI.DOC_PLANTILLAS_CAMPOS PC
+                            JOIN SIRI.DOC_CAMPO A ON PC.CAMP_NCORR = A.CAMP_NCORR
+                            JOIN SIRI.DOC_CATEGORIA B ON A.CATE_NCORR = B.CATE_NCORR
+                            JOIN SIRI.DOC_TIPO_CAMPO C ON A.TICA_NCORR = C.TICA_NCORR
+                            JOIN SIRI.DOC_COLUMNA_TABLA_PART D ON A.COLM_NCORR = D.COLM_NCORR            
+                  WHERE   PC.PLAT_NCORR = i_plat_ncorr--i_plat_ncorr
+                            AND PC.AUDI_FELIMINACION IS NULL
+                            AND A.AUDI_FELIMINACION IS NULL
+                            and D.COLM_TNOMBRE not in ('PVCM_TROL_DOCENTE')
+                            ORDER BY PC.PLCA_NORDEN)
+        LOOP
+                IF i = 1 THEN
+                    camposbd :=  y.CAMPOBD;
+                    tipocampo := y.TIPOCAMPO_DESC;
+                ELSE
+                    camposbd := camposbd || ', ' || y.CAMPOBD;
+                    tipocampo := tipocampo || ', ' || y.TIPOCAMPO_DESC;
+                END IF;
+                i := i+1;          
+        END LOOP;  
+        
+
+            for s in 
+            (
+                select 'ALUMNO' || ','|| p.pers_nrut || ',' || p.PERS_TNOMBRE || ',' || p.PERS_TAPE_PATERNO || ',' || p.PERS_TAPE_MATERNO insertdatos
+				from siga.personas p, siga.alumnos a, siga.cargas_academicas b,siga.secciones c
+				where a.matr_ncorr=b.matr_ncorr
+				and  b.secc_ccod=c.secc_ccod
+				and a.pers_ncorr=p.pers_ncorr
+				and a.emat_ccod = 1
+				and nvl(a.emat_ccod_peec,2) = 2
+				and nvl(b.sitf_ccod,'XX') not in ('EE')
+				and c.secc_ccod in (select column_value from SIGA.split(i_secciones)) -- 57807
+--				and p.pers_nrut in (10728965,10547874)
+        UNION ALL
+        select distinct 'DOCENTE' || ','|| p.pers_nrut || ',' || p.PERS_TNOMBRE || ',' || p.PERS_TAPE_PATERNO || ',' || p.PERS_TAPE_MATERNO insertdatos
+        from siga.personas p, siga.bloques_horarios c
+        where p.pers_ncorr = c.pers_ncorr
+        and c.secc_ccod in (select column_value from SIGA.split(i_secciones)) -- 57807
+        and p.pers_ncorr = v_pers_ncorr_docente-- in (v_pers_ncorr_docente)
+            ) 
+            LOOP 
+
+                i := 1; 
+                -- Recorre cada row para obtener datos
+                for z in(select trim(regexp_substr(s.insertdatos,'[^,]+', 1, level)) reg, trim(regexp_substr(tipocampo,'[^,]+', 1, level)) reg2, trim(regexp_substr(camposbd,'[^,]+', 1, level)) reg3 from dual
+                         connect by regexp_substr(s.insertdatos, '[^,]+', 1, level) is not null
+                         connect by regexp_substr(tipocampo, '[^,]+', 1, level) is not null
+                         connect by regexp_substr(camposbd, '[^,]+', 1, level) is not null)
+                LOOP
+
+                    IF i_TPAR_NCORR = 50 AND z.reg3 = 'PVCM_NRUT_PERSONA' THEN
+                        -- Borra datos existentes Bidirect
+                        BEGIN
+                            DELETE
+                            FROM siri.participacion_vcm
+                            WHERE EJEC_PLAN_NCORR = i_ejec_planncorr
+                                  AND TPAR_NCORR = i_TPAR_NCORR
+                                  AND PVCM_NRUT_PERSONA = z.reg;
+                        END;
+                    END IF;
+                
+                
+                    IF i = 1 then
+                        case
+                        when z.reg2 = 'TEXTO' OR z.reg2 = 'MAIL' OR z.reg2 = 'SELECCION' THEN
+                            camposinsertar2 := chr(39) || z.reg || chr(39);
+                        when z.reg2 = 'FECHA' THEN
+                            camposinsertar2 := 'TO_DATE('|| chr(39) || z.reg || chr(39) ||',' || chr(39) || 'dd/mm/yyyy'  || chr(39) || ')';
+                        ELSE     
+                            IF z.reg > 0 THEN
+                                camposinsertar2 := z.reg;
+                            ELSE
+                                camposinsertar2 := 'NULL';
+                            END IF;   
+                        END case;
+                    else
+                        case
+                        when z.reg2 = 'TEXTO' OR z.reg2 = 'MAIL' OR z.reg2 = 'SELECCION' THEN
+                            camposinsertar2 := camposinsertar2 || ','|| chr(39) || z.reg || chr(39);
+                        when z.reg2 = 'FECHA' THEN
+                            camposinsertar2 := camposinsertar2 || ',TO_DATE('|| chr(39) || z.reg || chr(39) ||',' || chr(39) || 'dd/mm/yyyy'  || chr(39) || ')'; 
+                        ELSE     
+                            IF z.reg > 0 THEN
+                                camposinsertar2 := camposinsertar2 || ',' || z.reg;
+                            ELSE
+                                camposinsertar2 := camposinsertar2 || ',' || 'NULL';
+                            END IF; 
+                        END case;    
+                    end if;  
+                     
+                i := i+1;                
+
+                END LOOP;        
+                
+                o_sql := 'INSERT INTO siri.participacion_vcm (EJEC_PLAN_NCORR, TPAR_NCORR, AUDI_TUSUARIO, AUDI_FMODIFICACION, '|| camposbd || ') VALUES ('|| i_ejec_planncorr ||', '|| i_TPAR_NCORR || ',' || TUSUARIO || ', sysdate,' || camposinsertar2 ||')';
+                EXECUTE IMMEDIATE o_sql;    
+            
+            END LOOP;
+
+        COMMIT; 
+                
+        o_error_message := 'OK'; 
+        o_error_code := 0;
+        
+       
+        OPEN o_cursor FOR
+            --select o_sql from dual;
+            select  o_error_code resultado,
+                    o_error_message mensaje
+            from dual;
+    
+    EXCEPTION
+        WHEN OTHERS
+        THEN
+            o_error_message := 'Error: ' || SQLCODE || ' - ' || SQLERRM || ' - ' || DBMS_UTILITY.FORMAT_ERROR_BACKTRACE ;
+            o_error_code := SQLCODE;
+            ROLLBACK;
+            
+            OPEN o_cursor FOR                
+                select  o_error_code resultado, 
+                        o_error_message mensaje 
+                from dual;
+                
+END SaveEstudiantesSigaSeccion;
